@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  app1:
+    build: .
+    depends_on:
+      - redis
+    environment:
+      - REDIS_ADDR=redis:6379
+
+  app2:
+    build: .
+    depends_on:
+      - redis
+    environment:
+      - REDIS_ADDR=redis:6379
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - app1
+      - app2
