@@ -60,7 +60,7 @@ docker-compose up -d --build
 > - Build App binary image
 > - Start Redis and Nginx Server
 > - Start two app instances (`app1`, `app2`)
-> - Start Endpoint `ws://localhost:8080/ws`
+> - Start Endpoint `ws://localhost:8080/ws/:room`
 
 ## Structure
 
@@ -68,6 +68,8 @@ docker-compose up -d --build
 src/
 ├── main.go              # Go WebSocket server
 │── go.mod
+├── views/
+│   └── index.html       # Chat UI portal connect to websocket  
 │── bin/app              # Compiled Go binary (built manually)
 ├── nginx/
 │   └── default.conf     # NGINX config for load balancing
@@ -82,33 +84,40 @@ src/
 Connect two postman tabs:
 
 ```bash
-ws://localhost:8080/ws
+ws://localhost:8080/ws/room1
+ws://localhost:8080/ws/room2
 ```
 
 Send a message in one, and you'll receive it in both!
 
 ```json
-{"sender":"Alice","content":"Hello everyone!"}
+{
+  "sender":"Alice",
+  "content":"Hello everyone!"
+}
 ```
 
 ### Option 2: Browser Client
 
 Create a simple `index.html` and open it in two tabs:
 
-```js
+```html
+<input id="name" placeholder="Input your name" />
 <input id="input" placeholder="Type a message..." />
-<button onclick="sendMsg()">Send</button>
+<button onclick="send()">Send</button>
 <pre id="log"></pre>
+
 <script>
-  const ws = new WebSocket("ws://localhost:8080/ws");
+  const ws = new WebSocket("ws://localhost:8080/ws/room1");
 
   ws.onopen = () => log("Connected");
   ws.onclose = () => log("Disconnected");
   ws.onmessage = (msg) => log(msg.data);
 
-  function sendMsg() {
+  function send() {
     const msg = document.getElementById("input").value;
-    const json = JSON.stringify({ sender: "Blob", content: msg });
+    const sender = document.getElementById("name").value;
+    const json = JSON.stringify({ sender: sender, content: msg });
     ws.send(json);
   }
 
@@ -117,6 +126,8 @@ Create a simple `index.html` and open it in two tabs:
   }
 </script>
 ```
+
+Or simply to open [http://localhost:8080/chat/64d018-6ec-802-ad7-e65e41](http://localhost:8080/chat/64d018-6ec-802-ad7-e65e41)
 
 ## License
 

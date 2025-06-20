@@ -2,11 +2,12 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"sync"
 
+	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/template/html/v2"
 	"github.com/gofiber/websocket/v2"
 	"github.com/redis/go-redis/v9"
 )
@@ -15,8 +16,12 @@ var ctx = context.Background()
 var redisClient *redis.Client
 
 // Thread-safe in-memory map of connected clients
-var clients = make(map[*websocket.Conn]bool)
+var clients = make(map[*websocket.Conn]string)
 var clientsMu sync.Mutex
+
+// Track which rooms we've already subscribed to
+var subscribedRooms = make(map[string]bool)
+var subscribedRoomsMu sync.Mutex
 
 // Message represents a chat message
 type Message struct {
@@ -31,23 +36,27 @@ func main() {
 	})
 
 	// Fiber app setup
-	app := fiber.New()
+	engine := html.New("./views", ".html")
+	app := fiber.New(fiber.Config{Views: engine})
+
+	app.Get("/chat/:room", func(c *fiber.Ctx) error {
+		return c.Render("index", fiber.Map{"Room": c.Params("room")})
+	})
 
 	// WebSocket upgrade route
-	app.Get("/ws", websocket.New(handleWebSocket))
-
-	// Start Redis subscriber goroutine
-	go subscribeRedis()
+	app.Get("/ws/:room", websocket.New(handleWebSocket))
 
 	log.Println("WebSocket server running on :3000")
 	log.Fatal(app.Listen(":3000"))
 }
 
 func handleWebSocket(c *websocket.Conn) {
+	room := c.Params("room")
+	go subscribeRedis(room)
 	defer cleanupClient(c)
 
 	clientsMu.Lock()
-	clients[c] = true
+	clients[c] = room
 	clientsMu.Unlock()
 
 	for {
@@ -57,42 +66,42 @@ func handleWebSocket(c *websocket.Conn) {
 			break
 		}
 
-		formatted := fmt.Sprintf("%s: %s", msg.Sender, msg.Content)
-
-		// Publish to Redis
-		if err := redisClient.Publish(ctx, "chat", formatted).Err(); err != nil {
-			log.Printf("Redis publish error: %v", err)
+		if data, err := sonic.Marshal(msg); err == nil {
+			if err = redisClient.Publish(ctx, "chat:"+room, data).Err(); err != nil {
+				log.Printf("Redis publish error: %v", err)
+			}
 		}
 	}
 }
 
 // Subscribes to Redis "chat" channel and broadcasts to local clients
-func subscribeRedis() {
-	sub := redisClient.Subscribe(ctx, "chat")
-	ch := sub.Channel()
+func subscribeRedis(room string) {
+	subscribedRoomsMu.Lock()
+	defer subscribedRoomsMu.Unlock()
 
-	for msg := range ch {
-		if msg == nil {
-			log.Println("Received nil message from Redis")
-			continue
-		}
+	if subscribedRooms[room] {
+		return
+	}
+	subscribedRooms[room] = true
+	sub := redisClient.Subscribe(ctx, "chat:"+room)
 
-		broadcastMessage(msg.Payload)
+	for msg := range sub.Channel() {
+		broadcastMessage(room, []byte(msg.Payload))
 	}
 }
 
 // Broadcasts a message to all connected WebSocket clients
-func broadcastMessage(message string) {
+func broadcastMessage(room string, message []byte) {
 	clientsMu.Lock()
 	defer clientsMu.Unlock()
 
-	for conn := range clients {
-		if err := conn.WriteMessage(websocket.TextMessage, []byte(message)); err != nil {
-			log.Printf("Write error to %s: %v", conn.RemoteAddr(), err)
-			if err = conn.Close(); err != nil {
-				log.Printf("WebSocket close error: %v", err)
+	for c, r := range clients {
+		if r == room {
+			if err := c.WriteMessage(websocket.TextMessage, message); err != nil {
+				log.Printf("Write error to %s: %v", c.RemoteAddr(), err)
+				delete(clients, c)
+				_ = c.Close()
 			}
-			delete(clients, conn)
 		}
 	}
 }
@@ -101,11 +110,6 @@ func broadcastMessage(message string) {
 func cleanupClient(c *websocket.Conn) {
 	clientsMu.Lock()
 	defer clientsMu.Unlock()
-
-	if _, ok := clients[c]; ok {
-		delete(clients, c)
-	}
-	if err := c.Close(); err != nil {
-		log.Printf("WebSocket close error: %v", err)
-	}
+	delete(clients, c)
+	_ = c.Close()
 }

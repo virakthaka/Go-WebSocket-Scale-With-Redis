@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <h3>WebSocket Test</h3>
+  <input id="name" placeholder="Input your name" />
+  <input id="input" placeholder="Type a message..." />
+  <button onclick="send()">Send</button>
+  <pre id="log"></pre>
+
+  <script>
+    const ws = new WebSocket("ws://localhost:8080/ws/{{.Room}}");
+
+    ws.onopen = () => log("Connected to WebSocket server");
+    ws.onmessage = (event) => log(event.data);
+    ws.onclose = () => log("Disconnected");
+
+    function send() {
+      const msg = document.getElementById("input").value;
+      const sender = document.getElementById("name").value;
+      const json = JSON.stringify({ sender: sender, content: msg });
+      ws.send(json);
+    }
+
+    function log(msg) {
+      document.getElementById("log").textContent += msg + "\n";
+    }
+  </script>
+</body>
+</html>
